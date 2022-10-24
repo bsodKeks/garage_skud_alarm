@@ -13,13 +13,14 @@
 #define PIN_BEEPER 3         // пин пищалки
 #define PIN_BTN_CLEAR 4      // пин кнопки сброса
 
-#define DELAY_GUARD 10*1000   // Задержка установки на охрану (мс)
-#define DELAY_SHORT 200
-#define DELAY_LONG 1000
-#define DELAY_ALARM 3*1000
-#define DELAY_BTN_CLEAR_HOLD 3*1000
+#define DELAY_GUARD 10*1000         // Задержка установки на охрану (мс)
+#define DELAY_SHORT 200             // Короткая задержка
+#define DELAY_LONG 1000             // Длинная задержка
+#define DELAY_ALARM 3*1000          // Задержка сработки тревоги
+#define DELAY_BTN_CLEAR_HOLD 3*1000 // Время для сработки зажима кнопки сброса
 
-#define MAX_KEYS_COUNT 10
+#define MAX_KEYS_COUNT 10      //Максимальное количестко ключей iButton в EEPROM
+#define KEY_LENGTH 8           //Длина ключа
 
 GButton motionSens(PIN_MOTION_SENSOR, LOW_PULL);          //Датчик движения
 GButton doorSens(PIN_BTN_DOOR);                           //Концевик двери
@@ -39,10 +40,9 @@ boolean strobDelayState = false;
 boolean strobProgram = false;
 boolean mayRead = false;
 
-byte dataArray[] = {0, 8, 16, 24, 32, 40, 48, 56, 64, 72};
-byte savedKeys[10][8];
-byte readedKey[8];
-byte nulls[8] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+byte savedKeys[MAX_KEYS_COUNT][KEY_LENGTH];
+byte readedKey[KEY_LENGTH];
+byte nulls[KEY_LENGTH] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
 
 enum { 
   WAIT,    //ожидание(снят с охраны)
@@ -78,7 +78,7 @@ void ton(){
 //чтение сохраненных ключей
 void readSavedKeys(){
   for (int i = 0; i < MAX_KEYS_COUNT; i++){
-    EEPROM.get(dataArray[i], savedKeys[i]);
+    EEPROM.get(KEY_LENGTH * i, savedKeys[i]);
   }  
 }
 
@@ -122,7 +122,7 @@ void readKey(){
 
 //Сравнение двух массивов
 boolean checkEqualsArrs(byte arrayFirst[8], byte arraySecond[8]){
-    for (int i = 0; i < 8; i++){
+    for (int i = 0; i < KEY_LENGTH; i++){
       if (arrayFirst[i] != arraySecond[i]) return false;      
     }
     return true;
@@ -141,7 +141,7 @@ void saveKey(){
   lightLed(true);
   int last = lastSavedKey();
   if (last < MAX_KEYS_COUNT) {
-    if (!keyAlreadyInMemory(readedKey)) EEPROM.put(dataArray[last], readedKey);
+    if (!keyAlreadyInMemory(readedKey)) EEPROM.put(KEY_LENGTH * last, readedKey);
     ton();
     readSavedKeys(); 
   } else {
@@ -200,7 +200,7 @@ void checkProgrammingState(){
 //Очистка всех ключей из памяти
 void clearAllKeys(){
    for (int i = 0; i < MAX_KEYS_COUNT; i++){
-    EEPROM.put(dataArray[i], nulls);
+    EEPROM.put(KEY_LENGTH * i, nulls);
   }
   memcpy(readedKey, nulls, sizeof(nulls));
   ton();
