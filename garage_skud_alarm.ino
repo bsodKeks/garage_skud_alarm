@@ -33,12 +33,10 @@ TimerMs tmrSens(DELAY_LONG, 1, 0);
 TimerMs tmrStrob(50, 1, 0);
 TimerMs tmrStrobDelay(1200, 1, 0);
 TimerMs tmrProgState(250, 1, 0);
-TimerMs tmrReadkey(DELAY_LONG, 1, 0);
 
 boolean strobState = false;
 boolean strobDelayState = false;
 boolean strobProgram = false;
-boolean mayRead = false;
 
 byte savedKeys[MAX_KEYS_COUNT][KEY_LENGTH];
 byte readedKey[KEY_LENGTH];
@@ -75,6 +73,25 @@ void ton(){
   tone(PIN_BEEPER, 432, DELAY_SHORT); 
 }
 
+//Вывод в консоль сохраненных ключей, для отладки
+void printKeys(){
+  for (int i=0; i < MAX_KEYS_COUNT; i++){
+    for (int j=0; j < KEY_LENGTH; j++){
+      Serial.print(savedKeys[i][j], HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+  }
+}
+
+//Вывод в консоль считанного ключа для отладки
+void printCurr() {
+  for (int j=0; j < KEY_LENGTH; j++){
+      Serial.print(readedKey[j], HEX);
+      Serial.print(" ");
+    }
+}
+
 //чтение сохраненных ключей
 void readSavedKeys(){
   for (int i = 0; i < MAX_KEYS_COUNT; i++){
@@ -83,12 +100,8 @@ void readSavedKeys(){
 }
 
 //чтение ключа ibutton
-void readKey(){
-  if (tmrReadkey.tick()) {
-    mayRead = !mayRead;
-  }
+void readKey() {
   if (readedKey[0] == NULL) {
-      if (mayRead) {
       byte i;
       byte present = 0;
       byte data[12];
@@ -116,12 +129,12 @@ void readKey(){
           return;
       }
       iButton.reset();
-    }
+    
   }
 }
 
 //Сравнение двух массивов
-boolean checkEqualsArrs(byte arrayFirst[8], byte arraySecond[8]){
+boolean checkEqualsArrs(byte arrayFirst[KEY_LENGTH], byte arraySecond[KEY_LENGTH]) {
     for (int i = 0; i < KEY_LENGTH; i++){
       if (arrayFirst[i] != arraySecond[i]) return false;      
     }
@@ -129,15 +142,17 @@ boolean checkEqualsArrs(byte arrayFirst[8], byte arraySecond[8]){
 }
 
 //Проверяет есть ли считанный ключ в памяти
-boolean keyAlreadyInMemory(byte arrayFirst[8]) {
+boolean keyAlreadyInMemory(byte arrayFirst[KEY_LENGTH]) {
   for (int i=0; i < MAX_KEYS_COUNT; i++) {
-    return checkEqualsArrs(arrayFirst, savedKeys[i]);
+    if (checkEqualsArrs(arrayFirst, savedKeys[i])){
+      return true;
+    }
   }
   return false;
 }
 
 //Сохранение ключа в EEPROM
-void saveKey(){
+void saveKey() {
   lightLed(true);
   int last = lastSavedKey();
   if (last < MAX_KEYS_COUNT) {
@@ -156,7 +171,7 @@ void saveKey(){
 }
 
 //Системные вызовы для обработки кнопок/датчиков
-void btnTicks(){
+void btnTicks() {
   motionSens.tick();
   doorSens.tick();
   jamperProg.tick();
@@ -168,11 +183,11 @@ int lastSavedKey() {
   for (int i=0; i < MAX_KEYS_COUNT; i++) {
     if (savedKeys[i][0] == NULL) return i;
   }
-  return 10;
+  return MAX_KEYS_COUNT;
 }
 
 //Проверка запуска режима программирования
-void checkProgrammingState(){
+void checkProgrammingState() {
   if (states == WAIT) {
     if (jamperProg.isHold()) {
       lightLed(true);
@@ -198,7 +213,7 @@ void checkProgrammingState(){
 }
 
 //Очистка всех ключей из памяти
-void clearAllKeys(){
+void clearAllKeys() {
    for (int i = 0; i < MAX_KEYS_COUNT; i++){
     EEPROM.put(KEY_LENGTH * i, nulls);
   }
@@ -209,17 +224,19 @@ void clearAllKeys(){
 }
 
 //Проверка постановки/снятия с охраны
-void checkGuardOrWait(){
+void checkGuardOrWait() {
   readKey();
-  if (readedKey[0] != NULL) {
+  if (readedKey[0] != NULL) {      
       if (keyAlreadyInMemory(readedKey)) {
-        ton(); 
+        ton();    
         if (states == WAIT) {
           changeGuardState(true);
         } else {
           changeGuardState(false);
         }
       } else {
+        ton();
+        delay(DELAY_SHORT);
         ton();
         delay(DELAY_LONG);
         readedKey[0] = NULL;
