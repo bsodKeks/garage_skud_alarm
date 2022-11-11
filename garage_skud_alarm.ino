@@ -9,8 +9,8 @@
 #define PIN_BTN_DOOR 9       // пин концевика двери(NO)
 #define PIN_MOTION_SENSOR 7  // пин датчика движения
 #define PIN_LED_GUARD 8      // пин светодиода охраны
-#define PIN_JAMPER_PROG 2    // пин джампера режима программирования
-#define PIN_BEEPER 3         // пин пищалки
+#define PIN_JAMPER_PROG 3    // пин джампера режима программирования
+#define PIN_BEEPER 2         // пин пищалки
 #define PIN_BTN_CLEAR 4      // пин кнопки сброса
 
 #define DELAY_GUARD 10*1000         // Задержка установки на охрану (мс)
@@ -18,9 +18,16 @@
 #define DELAY_LONG 1000             // Длинная задержка
 #define DELAY_ALARM 3*1000          // Задержка сработки тревоги
 #define DELAY_BTN_CLEAR_HOLD 3*1000 // Время для сработки зажима кнопки сброса
+#define BASE_ALARM_TIME_MS 10*1000  // Базовое работы тревоги
 
 #define MAX_KEYS_COUNT 10      //Максимальное количестко ключей iButton в EEPROM
 #define KEY_LENGTH 8           //Длина ключа
+
+#define countTimerAlarmRestartes 6*10 //т.к не получается запустить таймер на длительное время, 
+                                      //принято решение работать по схеме таймер на 10сек(BASE_ALARM_TIME_MS) перезапускается указанное количество раз
+                                      //таким обзаром можно подобрать время работы. 6 раз = 1мин
+
+int currentCountAlarmTimer = 0;
 
 GButton motionSens(PIN_MOTION_SENSOR, LOW_PULL);          //Датчик движения
 GButton doorSens(PIN_BTN_DOOR);                           //Концевик двери
@@ -33,6 +40,7 @@ TimerMs tmrSens(DELAY_LONG, 1, 0);
 TimerMs tmrStrob(50, 1, 0);
 TimerMs tmrStrobDelay(1200, 1, 0);
 TimerMs tmrProgState(250, 1, 0);
+TimerMs tmrAlarm(BASE_ALARM_TIME_MS, 0, 1);
 
 boolean strobState = false;
 boolean strobDelayState = false;
@@ -60,12 +68,41 @@ void setup() {
   btnClear.setTimeout(DELAY_BTN_CLEAR_HOLD);
   readSavedKeys();
   states = WAIT;
+  tmrAlarm.setTimerMode();
 }
 
 void loop() {
   btnTicks();
   checkProgrammingState();
   process();
+}
+
+//Вывод в консоль считанного ключа для отладки
+void printKey(byte key[KEY_LENGTH]) {
+  Serial.println();
+  Serial.print("key:");
+  Serial.println();
+  for (int j=0; j < KEY_LENGTH; j++) {
+    Serial.print(key[j], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+  Serial.print("________________");
+  Serial.println();
+}
+
+//Сохранение ключа в eeprom
+void putEEPROM(int adr, byte key[KEY_LENGTH]) {
+  for (int i = 0; i < KEY_LENGTH; i++) {
+     EEPROM.put(adr, key);
+  }   
+}
+
+//чтение сохраненных ключей
+void readSavedKeys() {
+  for (int i = 0; i < MAX_KEYS_COUNT; i++){
+    EEPROM.get(KEY_LENGTH * i, savedKeys[i]);
+  }  
 }
 
 //Пищалка
@@ -75,6 +112,8 @@ void ton(){
 
 //Вывод в консоль сохраненных ключей, для отладки
 void printKeys(){
+  Serial.print("saved_keys:");
+  Serial.println();
   for (int i=0; i < MAX_KEYS_COUNT; i++){
     for (int j=0; j < KEY_LENGTH; j++){
       Serial.print(savedKeys[i][j], HEX);
@@ -82,21 +121,21 @@ void printKeys(){
     }
     Serial.println();
   }
+  Serial.print("________________");
+  Serial.println();
 }
 
 //Вывод в консоль считанного ключа для отладки
 void printCurr() {
-  for (int j=0; j < KEY_LENGTH; j++){
-      Serial.print(readedKey[j], HEX);
-      Serial.print(" ");
-    }
-}
-
-//чтение сохраненных ключей
-void readSavedKeys(){
-  for (int i = 0; i < MAX_KEYS_COUNT; i++){
-    EEPROM.get(KEY_LENGTH * i, savedKeys[i]);
-  }  
+  Serial.print("readed_key:");
+  Serial.println();
+  for (int j=0; j < KEY_LENGTH; j++) {
+    Serial.print(readedKey[j], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+  Serial.print("________________");
+ 
 }
 
 //чтение ключа ibutton
@@ -156,7 +195,7 @@ void saveKey() {
   lightLed(true);
   int last = lastSavedKey();
   if (last < MAX_KEYS_COUNT) {
-    if (!keyAlreadyInMemory(readedKey)) EEPROM.put(KEY_LENGTH * last, readedKey);
+    if (!keyAlreadyInMemory(readedKey)) putEEPROM(KEY_LENGTH * last, readedKey);
     ton();
     readSavedKeys(); 
   } else {
@@ -215,7 +254,7 @@ void checkProgrammingState() {
 //Очистка всех ключей из памяти
 void clearAllKeys() {
    for (int i = 0; i < MAX_KEYS_COUNT; i++){
-    EEPROM.put(KEY_LENGTH * i, nulls);
+    putEEPROM(KEY_LENGTH * i, nulls);
   }
   memcpy(readedKey, nulls, sizeof(nulls));
   ton();
@@ -266,7 +305,7 @@ void changeGuardState(boolean toGuard) {
     digitalWrite(PIN_STROB, LOW);
     states = GUARD;
   } else {
-    stopAlarm();
+    stopAlarm(false);
     delay(DELAY_LONG);
     states = WAIT;
   }
@@ -278,13 +317,19 @@ void startAlarm() {
   if (states != ALARM) {
     states = ALARM;
     delay(DELAY_ALARM);
+    tmrAlarm.start();
   }
   
 }
 
 //Остановка тревоги и снятие с охраны
-void stopAlarm() {
-  states = WAIT;
+void stopAlarm(boolean toGuard) {
+  if (toGuard) {
+    states = GUARD;
+  } else {
+    states = WAIT;
+  }
+  currentCountAlarmTimer = 0;
   digitalWrite(PIN_HORN, LOW);
   digitalWrite(PIN_STROB, LOW);
 }
@@ -293,6 +338,15 @@ void stopAlarm() {
 void alarm() {
   digitalWrite(PIN_HORN, HIGH);
   strob();
+  if (tmrAlarm.tick()) {
+    currentCountAlarmTimer ++;
+    if (currentCountAlarmTimer >= countTimerAlarmRestartes) {
+      stopAlarm(true);      
+    } else {
+      tmrAlarm.start();
+    }
+    
+  }
 }
 
 //Запуск стробоскопа
